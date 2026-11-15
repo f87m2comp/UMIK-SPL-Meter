@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>UMIK SPL Meter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{--bg:#0b0d10;--card:#151a20;--line:#252d37;--fg:#e8edf2;--dim:#7e8b99;--acc:#3ddc97;--warn:#ff5c5c;--amb:#ffb020}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif}
+body{min-height:100dvh;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:10px;max-width:640px;margin:0 auto}
+.row{display:flex;gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+button,select,input{font:inherit;color:var(--fg)}
+button{background:#1d242c;border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:44px;cursor:pointer}
+button.on{background:var(--acc);color:#04120b;border-color:var(--acc);font-weight:700}
+button.big{flex:1}
+select{width:100%;background:#1d242c;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px}
+.seg{display:flex;flex:1;gap:6px}
+.seg button{flex:1;padding:10px 4px}
+.lbl{font-size:12px;color:var(--dim);margin:0 0 6px;letter-spacing:.04em}
+#main{text-align:center;padding:14px 8px 10px}
+#val{font-size:min(30vw,150px);line-height:1;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+#unit{font-size:18px;color:var(--dim);margin-top:4px}
+#tag{display:inline-block;font-size:13px;color:var(--dim);margin-top:2px}
+#bar{height:10px;border-radius:6px;background:#1d242c;margin-top:12px;overflow:hidden}
+#barf{height:100%;width:0;background:linear-gradient(90deg,#3ddc97,#ffe14d 65%,#ff5c5c);transition:width .1s}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center}
+.stats div{background:#10151a;border:1px solid var(--line);border-radius:10px;padding:8px 2px}
+.stats b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.stats span{font-size:11px;color:var(--dim)}
+canvas{width:100%;height:120px;display:block}
+#msg{font-size:13px;color:var(--amb);min-height:18px}
+#clip{display:none;color:#fff;background:var(--warn);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:700;margin-left:6px}
+details summary{cursor:pointer;color:var(--dim);font-size:14px;padding:6px 2px}
+details .in{display:flex;flex-direction:column;gap:10px;padding-top:6px}
+.small{font-size:12px;color:var(--dim);line-height:1.5}
+input[type=number]{width:90px;background:#1d242c;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px}
+label.chk{display:flex;align-items:center;gap:8px;font-size:14px}
+</style>
+</head>
+<body>
+
+<div class="card" id="main">
+  <div id="tag"><span id="tagtxt">dB(A) · Fast</span><span id="clip">CLIP</span></div>
+  <div id="val">--.-</div>
+  <div id="unit">dB SPL</div>
+  <div id="bar"><div id="barf"></div></div>
+</div>
+
+<div class="stats">
+  <div><b id="sLeq">--</b><span>Leq</span></div>
+  <div><b id="sMax">--</b><span>Max</span></div>
+  <div><b id="sMin">--</b><span>Min</span></div>
+  <div><b id="sPk">--</b><span>Peak</span></div>
+</div>
+
+<div class="card">
+  <div class="row" style="margin-bottom:8px">
+    <div class="seg" id="wSeg"><button data-w="A">A</button><button data-w="C">C</button><button data-w="Z">Z</button></div>
+    <div class="seg" id="tSeg"><button data-t="F">Fast</button><button data-t="S">Slow</button></div>
+  </div>
+  <div class="row">
+    <button class="big on" id="go">측정 시작</button>
+    <button id="reset">리셋</button>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div class="card"><p class="lbl">최근 2분</p><canvas id="cv"></canvas></div>
+
+<div class="card">
+<details>
+<summary>설정 / 캘리브레이션</summary>
+<div class="in">
+  <div><p class="lbl">입력 장치</p><select id="dev"><option value="">기본 입력</option></select></div>
+  <div>
+    <p class="lbl">UMIK-2 캘리브 파일 (.txt / .cal)</p>
+    <input type="file" id="calfile" accept=".txt,.cal,text/plain">
+    <p class="small" id="calinfo">파일 없음 — 주파수 보정 미적용</p>
+    <label class="chk"><input type="checkbox" id="calon" checked> 주파수 보정 적용</label>
+  </div>
+  <div>
+    <p class="lbl">레벨 보정 (trim)</p>
+    <div class="row" style="align-items:center">
+      <input type="number" id="refdb" value="94" step="0.1"> <span class="small">dB 기준값</span>
+      <button id="calbtn">지금 값을 맞추기</button>
+    </div>
+    <p class="small" id="offinfo"></p>
+    <p class="small">REW SPL 미터나 캘리브레이터(94 dB, 1 kHz)와 같은 조건에서 맞춰라. REW와 비교하면 가중(A/C/Z)과 시정수(Fast/Slow)를 똑같이 둬야 한다.</p>
+    <button id="trimreset">trim 초기화</button>
+  </div>
+</div>
+</details>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+
+//DSP-START
+function wp(f,fs){return 2*fs*Math.tan(Math.PI*f/fs);}           // 사전 왜곡(prewarp)된 아날로그 각주파수
+function bilinear(b,a,fs){                                          // b,a = [s^2,s^1,s^0] 계수
+  const k=2*fs,k2=k*k;
+  const nb=[b[0]*k2+b[1]*k+b[2], -2*b[0]*k2+2*b[2], b[0]*k2-b[1]*k+b[2]];
+  const na=[a[0]*k2+a[1]*k+a[2], -2*a[0]*k2+2*a[2], a[0]*k2-a[1]*k+a[2]];
+  return {ff:nb.map(x=>x/na[0]), fb:na.map(x=>x/na[0])};
+}
+function secMag(s,f,fs){
+  const w=2*Math.PI*f/fs, c1=Math.cos(w), s1=Math.sin(w), c2=Math.cos(2*w), s2=Math.sin(2*w);
+  const nr=s.ff[0]+s.ff[1]*c1+s.ff[2]*c2, ni=-(s.ff[1]*s1+s.ff[2]*s2);
+  const dr=1+s.fb[1]*c1+s.fb[2]*c2, di=-(s.fb[1]*s1+s.fb[2]*s2);
+  return Math.hypot(nr,ni)/Math.hypot(dr,di);
+}
+function weightingSections(type,fs){
+  if(type==='Z') return [];
+  const w1=wp(20.598997,fs), w2=wp(107.65265,fs), w3=wp(737.86223,fs), w4=wp(12194.217,fs);
+  const S=[bilinear([1,0,0],[1,2*w1,w1*w1],fs)];
+  if(type==='A') S.push(bilinear([1,0,0],[1,w2+w3,w2*w3],fs));
+  S.push(bilinear([0,0,1],[1,2*w4,w4*w4],fs));
+  let m=1; for(const s of S) m*=secMag(s,1000,fs);
+  const g=1/m; S[0].ff=S[0].ff.map(x=>x*g);
+  return S;
+}
+function cascadeDb(type,f,fs){let m=1;for(const s of weightingSections(type,fs))m*=secMag(s,f,fs);return 20*Math.log10(m);}
+
+function parseCal(text){
+  const pts=[]; let sens=null, again=null;
+  const lines=text.split(/\r?\n/);
+  for(const raw of lines){
+    const l=raw.trim(); if(!l) continue;
+    let m=l.match(/Sens\s*Factor\s*=\s*(-?[\d.]+)\s*dB/i);
+    if(m){sens=parseFloat(m[1]); const g=l.match(/AGain\s*=\s*(-?[\d.]+)/i); if(g) again=parseFloat(g[1]); continue;}
+    m=l.match(/^["']?\s*Sensitivity\s+(-?[\d.]+)\s*dBFS/i);
+    if(m){sens=parseFloat(m[1]); continue;}
+    const p=l.split(/[\s,;]+/).map(Number);
+    if(p.length>=2&&isFinite(p[0])&&isFinite(p[1])&&p[0]>0) pts.push([p[0],p[1]]);
+  }
+  pts.sort((a,b)=>a[0]-b[0]);
+  return {pts,sens,again};
+}
+function calAt(pts,f){                                               // 로그 주파수 보간, 범위 밖은 끝값 유지
+  if(f<=pts[0][0]) return pts[0][1];
+  if(f>=pts[pts.length-1][0]) return pts[pts.length-1][1];
+  let lo=0,hi=pts.length-1;
+  while(hi-lo>1){const mid=(lo+hi)>>1; if(pts[mid][0]<=f) lo=mid; else hi=mid;}
+  const t=(Math.log(f)-Math.log(pts[lo][0]))/(Math.log(pts[hi][0])-Math.log(pts[lo][0]));
+  return pts[lo][1]+t*(pts[hi][1]-pts[lo][1]);
+}
+function designIR(pts,fs,N){                                         // 마이크 편차의 역(−cal)을 선형위상 FIR로
+  const half=N/2, H=new Float64Array(half+1);
+  for(let k=0;k<=half;k++){
+    const f=Math.max(k*fs/N,1);
+    H[k]=Math.pow(10,-calAt(pts,f)/20);
+  }
+  const cosT=new Float64Array(N); for(let i=0;i<N;i++) cosT[i]=Math.cos(2*Math.PI*i/N);
+  const h=new Float32Array(N);
+  for(let n=0;n<N;n++){
+    const m=((n-half)%N+N)%N;
+    let acc=H[0]+H[half]*cosT[(half*m)%N];
+    for(let k=1;k<half;k++) acc+=2*H[k]*cosT[(k*m)%N];
+    const win=0.5-0.5*Math.cos(2*Math.PI*(n+0.5)/N);
+    h[n]=acc/N*win;
+  }
+  return h;
+}
+//DSP-END
+
+/* ---------- 상태 ---------- */
+const st={w:'A',t:'F',running:false,ctx:null,src:null,stream:null,meter:null,conv:null,filters:[],
+  cal:null,calOn:true,trim:0,baseOff:94+31.9,baseKnown:false,
+  ms:0,leqS:0,leqN:0,pk:0,max:-Infinity,min:Infinity,t0:0,hist:[],win:[],wake:null,lastHist:0};
+const DEFAULT_OFF=94+31.9;           // UMIK-2 스펙시트: 0 dB gain에서 94 dB SPL = -31.9 dBFS (대략값)
+
+try{
+  const s=JSON.parse(localStorage.getItem('umikspl')||'{}');
+  if(s.w)st.w=s.w; if(s.t)st.t=s.t; if(typeof s.trim==='number')st.trim=s.trim; if(s.calText)loadCalText(s.calText,true);
+}catch(e){}
+function save(){try{localStorage.setItem('umikspl',JSON.stringify({w:st.w,t:st.t,trim:st.trim,calText:st.calText||null}));}catch(e){}}
+
+function offset(){return st.baseOff+st.trim;}
+function updateInfo(){
+  $('offinfo').textContent=`현재 dBFS→dB SPL 오프셋 ${offset().toFixed(2)} dB (기본 ${st.baseOff.toFixed(2)} ${st.baseKnown?'· 캘리브 파일 Sens Factor 기반':'· 스펙시트 대략값'}, trim ${st.trim>=0?'+':''}${st.trim.toFixed(2)})`;
+  $('tagtxt').textContent=`dB(${st.w==='Z'?'Z':st.w}) · ${st.t==='F'?'Fast':'Slow'}`;
+  document.querySelectorAll('#wSeg button').forEach(b=>b.classList.toggle('on',b.dataset.w===st.w));
+  document.querySelectorAll('#tSeg button').forEach(b=>b.classList.toggle('on',b.dataset.t===st.t));
+}
+
+function loadCalText(text,silent){
+  const c=parseCal(text);
+  if(c.pts.length<5){ if(!silent) $('calinfo').textContent='캘리브 데이터를 못 읽었다 (주파수/dB 두 열 형식이어야 함)'; return false;}
+  st.cal=c; st.calText=text;
+  if(c.sens!==null){st.baseOff=94-c.sens; st.baseKnown=true;} else {st.baseOff=DEFAULT_OFF; st.baseKnown=false;}
+  $('calinfo').textContent=`${c.pts.length}포인트 로드 (${c.pts[0][0].toFixed(0)}–${c.pts[c.pts.length-1][0].toFixed(0)} Hz)`+(c.sens!==null?` · Sens Factor ${c.sens} dB`:'')+(c.again!==null?` · AGain ${c.again} dB`:'');
+  if(st.ctx) buildConv();
+  save(); updateInfo(); return true;
+}
+
+/* ---------- 오디오 ---------- */
+const WORKLET=`class P extends AudioWorkletProcessor{constructor(){super();this.s=0;this.n=0;this.pk=0;}
+process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++){const v=c[k];this.s+=v*v;const a=v<0?-v:v;if(a>this.pk)this.pk=a;}
+this.n+=c.length;if(this.n>=1024){this.port.postMessage([this.s,this.n,this.pk]);this.s=0;this.n=0;this.pk=0;}}return true;}}
+registerProcessor('lvl',P);`;
+
+function buildConv(){
+  if(!st.ctx) return;
+  if(!st.cal){st.conv=null; rebuild(); return;}
+  const N=8192, h=designIR(st.cal.pts,st.ctx.sampleRate,N);
+  const buf=st.ctx.createBuffer(1,N,st.ctx.sampleRate); buf.getChannelData(0).set(h);
+  const cv=st.ctx.createConvolver(); cv.normalize=false; cv.buffer=buf;
+  st.conv=cv; rebuild();
+}
+function rebuild(){
+  if(!st.src) return;
+  try{st.src.disconnect();}catch(e){}
+  if(st.conv){try{st.conv.disconnect();}catch(e){}}
+  for(const f of st.filters){try{f.disconnect();}catch(e){}}
+  st.filters=weightingSections(st.w,st.ctx.sampleRate).map(s=>st.ctx.createIIRFilter(s.ff,s.fb));
+  let prev=st.src;
+  if(st.conv&&st.calOn){prev.connect(st.conv);prev=st.conv;}
+  for(const f of st.filters){prev.connect(f);prev=f;}
+  prev.connect(st.meter);
+}
+
+async function listDevices(){
+  try{
+    const ds=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput');
+    const sel=$('dev'), cur=sel.value; sel.innerHTML='';
+    ds.forEach((d,i)=>{const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||('입력 '+(i+1));sel.appendChild(o);});
+    const u=ds.find(d=>/umik/i.test(d.label));
+    sel.value=cur&&ds.some(d=>d.deviceId===cur)?cur:(u?u.deviceId:(ds[0]?ds[0].deviceId:''));
+  }catch(e){}
+}
+
+async function start(){
+  $('msg').textContent='';
+  if(!window.isSecureContext||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    $('msg').textContent='마이크 접근은 https 페이지에서만 된다. 호스팅한 https 주소로 열어라.'; return;
+  }
+  try{
+    const id=$('dev').value;
+    const audio={echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1};
+    if(id) audio.deviceId={exact:id};
+    st.stream=await navigator.mediaDevices.getUserMedia({audio});
+  }catch(e){
+    $('msg').textContent='마이크를 못 열었다: '+(e.name||e.message)+' — 권한 허용과 USB 연결을 확인해라.'; return;
+  }
+  await listDevices();
+  const tr=st.stream.getAudioTracks()[0];
+  try{const s=tr.getSettings(); if(s.deviceId) $('dev').value=s.deviceId;}catch(e){}
+  const ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000,latencyHint:'interactive'});
+  st.ctx=ctx;
+  try{
+    const url=URL.createObjectURL(new Blob([WORKLET],{type:'application/javascript'}));
+    await ctx.audioWorklet.addModule(url);
+  }catch(e){ $('msg').textContent='이 브라우저는 AudioWorklet을 지원하지 않는다.'; stop(); return; }
+  st.src=ctx.createMediaStreamSource(st.stream);
+  st.meter=new AudioWorkletNode(ctx,'lvl',{numberOfInputs:1,numberOfOutputs:1,channelCount:1,channelCountMode:'explicit'});
+  const z=ctx.createGain(); z.gain.value=0; st.meter.connect(z); z.connect(ctx.destination);
+  st.meter.port.onmessage=e=>onChunk(e.data[0],e.data[1],e.data[2]);
+  buildConv();
+  if(ctx.state==='suspended') await ctx.resume();
+  resetStats();
+  st.running=true; $('go').textContent='정지'; $('go').classList.remove('on');
+  try{ if(navigator.wakeLock) st.wake=await navigator.wakeLock.request('screen'); }catch(e){}
+  if(!st.cal) $('msg').textContent='캘리브 파일 없이 동작 중 — 설정에서 UMIK-2 파일을 올려라.';
+  tr.onended=()=>{ if(st.running){ $('msg').textContent='입력 장치 연결이 끊겼다.'; stop(); } };
+}
+function stop(){
+  st.running=false;
+  try{ if(st.stream) st.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  try{ if(st.ctx) st.ctx.close(); }catch(e){}
+  try{ if(st.wake) st.wake.release(); }catch(e){}
+  st.ctx=null;st.src=null;st.stream=null;st.meter=null;st.conv=null;st.filters=[];st.wake=null;
+  $('go').textContent='측정 시작'; $('go').classList.add('on');
+}
+
+/* ---------- 측정 ---------- */
+function resetStats(){
+  st.leqS=0;st.leqN=0;st.pk=0;st.max=-Infinity;st.min=Infinity;st.t0=performance.now();st.hist=[];st.win=[];
+}
+const toDb=ms=>10*Math.log10(Math.max(ms,1e-20))+offset();
+function onChunk(sumsq,n,pk){
+  const fs=st.ctx?st.ctx.sampleRate:48000, dt=n/fs, ms=sumsq/n;
+  const tau=st.t==='F'?0.125:1.0, a=1-Math.exp(-dt/tau);
+  st.ms+=(ms-st.ms)*a;
+  st.leqS+=sumsq; st.leqN+=n;
+  if(pk>st.pk) st.pk=pk;
+  st.win.push([sumsq,n]); let tot=0; for(const w of st.win) tot+=w[1];
+  while(tot>fs*3&&st.win.length>1){tot-=st.win[0][1]; st.win.shift();}
+  if(performance.now()-st.t0>1500){
+    const d=toDb(st.ms); if(d>st.max)st.max=d; if(d<st.min)st.min=d;
+  }
+  st.clip=pk>0.97?performance.now():(st.clip||0);
+}
+
+const fmt=v=>isFinite(v)?v.toFixed(1):'--';
+function paint(){
+  if(st.running){
+    const d=toDb(st.ms);
+    $('val').textContent=fmt(d);
+    $('barf').style.width=Math.max(0,Math.min(100,(d-30)/(130-30)*100))+'%';
+    $('sLeq').textContent=st.leqN?fmt(toDb(st.leqS/st.leqN)):'--';
+    $('sMax').textContent=fmt(st.max); $('sMin').textContent=fmt(st.min);
+    $('sPk').textContent=st.pk>0?fmt(20*Math.log10(st.pk)+offset()):'--';
+    $('clip').style.display=(performance.now()-(st.clip||0)<2000)?'inline-block':'none';
+    const now=performance.now();
+    if(now-st.lastHist>500){st.lastHist=now; st.hist.push(d); if(st.hist.length>240) st.hist.shift(); drawHist();}
+  }
+}
+setInterval(paint,200);
+
+function drawHist(){
+  const c=$('cv'), r=c.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  if(c.width!==Math.round(r.width*dpr)){c.width=Math.round(r.width*dpr);c.height=Math.round(r.height*dpr);}
+  const g=c.getContext('2d'), W=c.width, H=c.height; g.clearRect(0,0,W,H);
+  const lo=20, hi=140;
+  g.strokeStyle='#252d37'; g.fillStyle='#7e8b99'; g.lineWidth=1; g.font=`${11*dpr}px sans-serif`;
+  for(let v=20;v<=140;v+=20){const y=H-(v-lo)/(hi-lo)*H; g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke(); g.fillText(v,2,y-2);}
+  if(st.hist.length<2) return;
+  g.strokeStyle='#3ddc97'; g.lineWidth=2*dpr; g.beginPath();
+  st.hist.forEach((v,i)=>{const x=i/239*W, y=H-(Math.max(lo,Math.min(hi,v))-lo)/(hi-lo)*H; i?g.lineTo(x,y):g.moveTo(x,y);});
+  g.stroke();
+}
+
+/* ---------- UI ---------- */
+$('go').onclick=()=>st.running?stop():start();
+$('reset').onclick=()=>{resetStats();st.ms=st.ms;};
+document.querySelectorAll('#wSeg button').forEach(b=>b.onclick=()=>{st.w=b.dataset.w; if(st.running){rebuild();resetStats();} save(); updateInfo();});
+document.querySelectorAll('#tSeg button').forEach(b=>b.onclick=()=>{st.t=b.dataset.t; st.max=-Infinity; st.min=Infinity; save(); updateInfo();});
+$('calon').onchange=e=>{st.calOn=e.target.checked; if(st.running) rebuild();};
+$('calfile').onchange=async e=>{const f=e.target.files[0]; if(!f) return; loadCalText(await f.text(),false);};
+$('trimreset').onclick=()=>{st.trim=0;save();updateInfo();};
+$('calbtn').onclick=()=>{
+  if(!st.running||!st.win.length){$('msg').textContent='측정 중일 때 눌러라.';return;}
+  let s=0,n=0; for(const w of st.win){s+=w[0];n+=w[1];}
+  const cur=10*Math.log10(Math.max(s/n,1e-20))+offset();
+  const ref=parseFloat($('refdb').value); if(!isFinite(ref)) return;
+  st.trim+=ref-cur; save(); updateInfo(); resetStats();
+  $('msg').textContent=`최근 3초 평균 ${cur.toFixed(1)} → ${ref.toFixed(1)} dB로 맞춤 (trim ${st.trim.toFixed(2)} dB)`;
+};
+$('dev').onchange=()=>{ if(st.running){stop();start();} };
+document.addEventListener('visibilitychange',async()=>{
+  if(document.visibilityState==='visible'&&st.running){
+    try{ if(st.ctx&&st.ctx.state==='suspended') await st.ctx.resume(); if(navigator.wakeLock) st.wake=await navigator.wakeLock.request('screen'); }catch(e){}
+  }
+});
+window.addEventListener('resize',drawHist);
+if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange',listDevices);
+updateInfo(); drawHist();
+</script>
+</body>
+</html>
